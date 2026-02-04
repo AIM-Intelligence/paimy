@@ -1,0 +1,191 @@
+/**
+ * LLM Orchestrator
+ * Claude API 호출 및 Tool Use 실행 관리
+ */
+
+import Anthropic from '@anthropic-ai/sdk';
+import { PAIMY_TOOLS, ToolName } from './tools';
+import {
+  buildFullSystemPrompt,
+  UserContext,
+  ConversationContextData,
+} from './prompts';
+import { executeToolCall, ToolResult } from './tool-executor';
+
+// Anthropic 클라이언트 싱글톤
+let anthropicClient: Anthropic | null = null;
+
+function getAnthropicClient(): Anthropic {
+  if (anthropicClient) {
+    return anthropicClient;
+  }
+
+  const apiKey = process.env.ANTHROPIC_API_KEY?.trim();
+  if (!apiKey) {
+    throw new Error('ANTHROPIC_API_KEY is not configured');
+  }
+
+  anthropicClient = new Anthropic({ apiKey });
+  return anthropicClient;
+}
+
+// === 타입 정의 ===
+
+export interface OrchestratorInput {
+  userMessage: string;
+  userContext: UserContext;
+  conversationContext: ConversationContextData | null;
+}
+
+export interface OrchestratorOutput {
+  response: string;
+  toolsUsed: string[];
+  updatedContext: Partial<ConversationContextData>;
+}
+
+// === 메인 함수 ===
+
+/**
+ * 사용자 메시지 처리 및 응답 생성
+ */
+export async function processMessage(
+  input: OrchestratorInput
+): Promise<OrchestratorOutput> {
+  console.log('[Orchestrator] Processing message:', input.userMessage);
+
+  const client = getAnthropicClient();
+
+  // 시스템 프롬프트 생성
+  const systemPrompt = buildFullSystemPrompt(
+    input.userContext,
+    input.conversationContext
+  );
+  console.log('[Orchestrator] System prompt length:', systemPrompt.length);
+
+  // 초기 메시지
+  const messages: Anthropic.MessageParam[] = [
+    { role: 'user', content: input.userMessage },
+  ];
+
+  const toolsUsed: string[] = [];
+  const updatedContext: Partial<ConversationContextData> = {};
+
+  // Tool Use 루프 (최대 5회)
+  let iterations = 0;
+  const maxIterations = 5;
+
+  while (iterations < maxIterations) {
+    iterations++;
+
+    // Claude API 호출
+    console.log('[Orchestrator] Calling Claude API, iteration:', iterations);
+    const response = await client.messages.create({
+      model: 'claude-sonnet-4-5-20250929',
+      max_tokens: 1024,
+      system: systemPrompt,
+      tools: PAIMY_TOOLS,
+      messages,
+    });
+    console.log('[Orchestrator] Claude response stop_reason:', response.stop_reason);
+    console.log('[Orchestrator] Claude response content blocks:', response.content.length);
+
+    // 응답 처리
+    const textBlocks: string[] = [];
+    const toolUseBlocks: Anthropic.ToolUseBlock[] = [];
+
+    for (const block of response.content) {
+      if (block.type === 'text') {
+        textBlocks.push(block.text);
+      } else if (block.type === 'tool_use') {
+        toolUseBlocks.push(block);
+      }
+    }
+
+    // Tool Use가 없으면 종료
+    if (toolUseBlocks.length === 0) {
+      const finalResponse = textBlocks.join('\n');
+      console.log('[Orchestrator] Final response length:', finalResponse.length);
+      console.log('[Orchestrator] Final response preview:', finalResponse.substring(0, 100));
+      return {
+        response: finalResponse,
+        toolsUsed,
+        updatedContext,
+      };
+    }
+
+    // Tool 실행
+    const toolResults: Anthropic.ToolResultBlockParam[] = [];
+
+    for (const toolUse of toolUseBlocks) {
+      toolsUsed.push(toolUse.name);
+
+      try {
+        const result = await executeToolCall(
+          toolUse.name as ToolName,
+          toolUse.input as Record<string, unknown>,
+          input.userContext
+        );
+
+        // 컨텍스트 업데이트
+        if (result.contextUpdate) {
+          Object.assign(updatedContext, result.contextUpdate);
+        }
+
+        toolResults.push({
+          type: 'tool_result',
+          tool_use_id: toolUse.id,
+          content: JSON.stringify(result.data),
+        });
+      } catch (error: any) {
+        toolResults.push({
+          type: 'tool_result',
+          tool_use_id: toolUse.id,
+          content: JSON.stringify({ error: error.message }),
+          is_error: true,
+        });
+      }
+    }
+
+    // 메시지 히스토리에 추가
+    messages.push({
+      role: 'assistant',
+      content: response.content,
+    });
+    messages.push({
+      role: 'user',
+      content: toolResults,
+    });
+
+    // stop_reason이 end_turn이면 종료 (다음 루프에서 텍스트만 응답)
+    if (response.stop_reason === 'end_turn') {
+      break;
+    }
+  }
+
+  // 최대 반복 도달 시 마지막 텍스트 반환
+  return {
+    response: '요청을 처리하는 데 문제가 발생했습니다. 다시 시도해 주세요.',
+    toolsUsed,
+    updatedContext,
+  };
+}
+
+/**
+ * 간단한 응답 생성 (Tool Use 없이)
+ */
+export async function generateSimpleResponse(
+  systemPrompt: string,
+  userMessage: string
+): Promise<string> {
+  const client = getAnthropicClient();
+
+  const response = await client.messages.create({
+    model: 'claude-sonnet-4-5-20250929',
+    max_tokens: 1024,
+    system: systemPrompt,
+    messages: [{ role: 'user', content: userMessage }],
+  });
+
+  const textContent = response.content.find((block) => block.type === 'text');
+  return textContent?.type === 'text' ? textContent.text : '';
+}
