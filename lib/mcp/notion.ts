@@ -116,7 +116,7 @@ export async function getTasks(filter: TaskFilter = {}): Promise<Task[]> {
 
   if (filter.keyword) {
     conditions.push({
-      property: '제목',
+      property: '이름',
       title: {
         contains: filter.keyword,
       },
@@ -243,7 +243,7 @@ export async function createTask(data: TaskCreate): Promise<Task> {
   const databaseId = getTaskDatabaseId();
 
   const properties: any = {
-    제목: {
+    이름: {
       title: [
         {
           type: 'text',
@@ -313,8 +313,8 @@ export async function createTask(data: TaskCreate): Promise<Task> {
 function parseTaskPage(page: any): Task {
   const props = page.properties;
 
-  // 제목 추출
-  const titleProp = props['제목'] || props['태스크명'] || props['Name'];
+  // 제목 추출 (이름 → 제목 → Name 순으로 fallback)
+  const titleProp = props['이름'] || props['제목'] || props['Name'];
   const name = titleProp?.title?.[0]?.plain_text || 'Untitled';
 
   // 담당자 추출
