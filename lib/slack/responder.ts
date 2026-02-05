@@ -274,3 +274,93 @@ export async function joinChannel(channelId: string): Promise<boolean> {
     return false;
   }
 }
+
+// === 스레드 히스토리 ===
+
+export interface ThreadMessage {
+  user: string;
+  text: string;
+  ts: string;
+  isBot: boolean;
+  userName?: string;
+}
+
+/**
+ * 스레드 히스토리 조회
+ * conversations.replies API를 사용하여 스레드 내 메시지 목록 반환
+ */
+export async function getThreadHistory(
+  channel: string,
+  threadTs: string,
+  limit: number = 10
+): Promise<ThreadMessage[]> {
+  const client = getSlackClient();
+
+  try {
+    const result = await client.conversations.replies({
+      channel,
+      ts: threadTs,
+      limit: limit + 1, // 부모 메시지 포함 가능성 고려
+      inclusive: true,
+    });
+
+    if (!result.messages || result.messages.length === 0) {
+      return [];
+    }
+
+    let messages = result.messages;
+
+    // 최근 N개만 반환 (가장 오래된 것부터)
+    if (messages.length > limit) {
+      messages = messages.slice(-limit);
+    }
+
+    return messages.map((msg) => ({
+      user: msg.user || 'unknown',
+      text: msg.text || '',
+      ts: msg.ts || '',
+      isBot: !!msg.bot_id,
+      userName: undefined, // 나중에 enrichThreadWithUserNames로 채움
+    }));
+  } catch (error: any) {
+    // Rate limit 에러 시 빈 배열 반환
+    if (error.data?.error === 'ratelimited') {
+      console.warn('[getThreadHistory] Rate limited, returning empty history');
+      return [];
+    }
+    console.error('[getThreadHistory] Error fetching thread:', error);
+    return [];
+  }
+}
+
+/**
+ * 스레드 메시지에 사용자 이름 추가
+ */
+export async function enrichThreadWithUserNames(
+  messages: ThreadMessage[]
+): Promise<ThreadMessage[]> {
+  const userCache = new Map<string, string>();
+
+  for (const msg of messages) {
+    if (msg.isBot) {
+      msg.userName = 'Paimy';
+      continue;
+    }
+
+    if (userCache.has(msg.user)) {
+      msg.userName = userCache.get(msg.user);
+      continue;
+    }
+
+    try {
+      const userInfo = await getUserInfo(msg.user);
+      const name = userInfo?.displayName || userInfo?.realName || msg.user;
+      userCache.set(msg.user, name);
+      msg.userName = name;
+    } catch {
+      msg.userName = msg.user;
+    }
+  }
+
+  return messages;
+}

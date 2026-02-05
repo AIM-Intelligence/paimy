@@ -22,12 +22,15 @@ async function getRawBody(req: VercelRequest): Promise<string> {
     req.on('error', reject);
   });
 }
-import { UserContext, ConversationContextData } from '../../lib/llm/prompts';
+import { UserContext, ConversationContextData, ThreadMessageContext } from '../../lib/llm/prompts';
 import {
   replyInThread,
   sendMessage,
   addReaction,
   getUserInfo,
+  getThreadHistory,
+  enrichThreadWithUserNames,
+  ThreadMessage,
 } from '../../lib/slack/responder';
 import {
   getUserMappingBySlackId,
@@ -154,6 +157,30 @@ async function handleMessageAsync(
     let conversationContextData: ConversationContextData | null = null;
     if (conversationCtx?.context_data) {
       conversationContextData = conversationCtx.context_data as ConversationContextData;
+    } else {
+      conversationContextData = {};
+    }
+
+    // 스레드 히스토리 조회 (threadTs가 있을 때만)
+    if (threadTs) {
+      console.log('[handleMessageAsync] Fetching thread history for:', threadTs);
+      const threadMessages = await getThreadHistory(channel, threadTs, 10);
+
+      if (threadMessages.length > 0) {
+        // 사용자 이름 추가
+        const enrichedMessages = await enrichThreadWithUserNames(threadMessages);
+
+        // 현재 메시지 제외하고 컨텍스트 형식으로 변환
+        conversationContextData.threadHistory = enrichedMessages
+          .filter((msg) => msg.ts !== ts) // 현재 메시지 제외
+          .map((msg) => ({
+            role: msg.isBot ? 'assistant' : 'user',
+            userName: msg.userName || msg.user,
+            content: cleanMessageText(msg.text),
+          })) as ThreadMessageContext[];
+
+        console.log('[handleMessageAsync] Thread history:', conversationContextData.threadHistory.length, 'messages');
+      }
     }
 
     // LLM 처리
