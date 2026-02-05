@@ -312,9 +312,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     switch (slackEvent.type) {
       case 'app_mention':
         console.log('[Slack Events] Processing app_mention');
-        console.log('[DEBUG-20260205-TEST] === UNIQUE DEPLOY TEST LOG ===');
-        console.log('[Slack Events] ts:', slackEvent.ts);
-        console.log('[Slack Events] thread_ts:', slackEvent.thread_ts);
         // 디버그: await로 변경하여 로그 확인
         try {
           await handleMessageAsync(
