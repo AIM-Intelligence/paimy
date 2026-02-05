@@ -9,6 +9,7 @@ import {
   buildFullSystemPrompt,
   UserContext,
   ConversationContextData,
+  ThreadMessageContext,
 } from './prompts';
 import { executeToolCall, ToolResult } from './tool-executor';
 
@@ -43,6 +44,31 @@ export interface OrchestratorOutput {
   updatedContext: Partial<ConversationContextData>;
 }
 
+// === 헬퍼 함수 ===
+
+/**
+ * 연속된 같은 role 메시지를 합쳐서 Claude API 규칙에 맞게 변환
+ * (Claude API는 user/assistant가 번갈아 나와야 함)
+ */
+function normalizeMessages(
+  history: ThreadMessageContext[]
+): Anthropic.MessageParam[] {
+  const result: Anthropic.MessageParam[] = [];
+
+  for (const msg of history) {
+    const lastMsg = result[result.length - 1];
+
+    if (lastMsg && lastMsg.role === msg.role) {
+      // 같은 role이면 내용 합치기
+      lastMsg.content += '\n' + msg.content;
+    } else {
+      result.push({ role: msg.role, content: msg.content });
+    }
+  }
+
+  return result;
+}
+
 // === 메인 함수 ===
 
 /**
@@ -62,10 +88,11 @@ export async function processMessage(
   );
   console.log('[Orchestrator] System prompt length:', systemPrompt.length);
 
-  // 초기 메시지
-  const messages: Anthropic.MessageParam[] = [
-    { role: 'user', content: input.userMessage },
-  ];
+  // 초기 메시지 (스레드 히스토리 포함)
+  const messages: Anthropic.MessageParam[] = input.conversationContext?.threadHistory
+    ? normalizeMessages(input.conversationContext.threadHistory)
+    : [];
+  messages.push({ role: 'user', content: input.userMessage });
 
   const toolsUsed: string[] = [];
   const updatedContext: Partial<ConversationContextData> = {};

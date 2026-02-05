@@ -139,6 +139,7 @@ export function buildThreadHistoryPrompt(
 
 /**
  * 전체 시스템 프롬프트 생성
+ * (스레드 히스토리는 messages 배열에 추가되므로 시스템 프롬프트에서 제외)
  */
 export function buildFullSystemPrompt(
   user: UserContext,
@@ -147,7 +148,7 @@ export function buildFullSystemPrompt(
   let prompt = SYSTEM_PROMPT;
   prompt += buildUserContextPrompt(user);
   prompt += buildConversationContextPrompt(conversationContext);
-  prompt += buildThreadHistoryPrompt(conversationContext?.threadHistory);
+  // buildThreadHistoryPrompt 제거 - messages 배열에서 처리
   return prompt;
 }
 
