@@ -379,6 +379,32 @@ function parseDueDate(input: string): string {
     return now.toISOString().split('T')[0];
   }
 
+  // 한국어 요일 매핑 (일=0, 월=1, ..., 토=6)
+  const koreanDays: Record<string, number> = {
+    '일': 0, '월': 1, '화': 2, '수': 3, '목': 4, '금': 5, '토': 6,
+  };
+
+  // "다음주 X요일" 패턴 (다음주 = 이번 주가 아닌 그 다음 주)
+  const nextWeekMatch = input.match(/다음주\s*(일|월|화|수|목|금|토)요일/);
+  if (nextWeekMatch) {
+    const targetDay = koreanDays[nextWeekMatch[1]];
+    const currentDay = now.getDay();
+    // 다음 주의 해당 요일까지의 일수 계산
+    const daysUntilNextWeek = (7 - currentDay) + targetDay;
+    now.setDate(now.getDate() + daysUntilNextWeek);
+    return now.toISOString().split('T')[0];
+  }
+
+  // "이번주 X요일" 패턴
+  const thisWeekMatch = input.match(/이번주\s*(일|월|화|수|목|금|토)요일/);
+  if (thisWeekMatch) {
+    const targetDay = koreanDays[thisWeekMatch[1]];
+    const currentDay = now.getDay();
+    const diff = targetDay - currentDay;
+    now.setDate(now.getDate() + diff);
+    return now.toISOString().split('T')[0];
+  }
+
   // 이미 YYYY-MM-DD 형식이면 그대로
   if (/^\d{4}-\d{2}-\d{2}$/.test(input)) {
     return input;

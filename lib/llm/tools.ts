@@ -134,7 +134,7 @@ export const PAIMY_TOOLS: Tool[] = [
         },
         due_date: {
           type: 'string',
-          description: '새 마감일 (YYYY-MM-DD 형식 또는 "tomorrow", "next_monday" 등)',
+          description: '새 마감일. 형식: YYYY-MM-DD, "tomorrow", "next_monday", 또는 한국어("다음주 수요일", "이번주 금요일" 등)',
         },
       },
       required: ['due_date'],
@@ -158,7 +158,7 @@ export const PAIMY_TOOLS: Tool[] = [
         },
         due_date: {
           type: 'string',
-          description: '마감일 (YYYY-MM-DD 형식)',
+          description: '마감일. 형식: YYYY-MM-DD, "tomorrow", "next_monday", 또는 한국어("다음주 수요일", "이번주 금요일" 등)',
         },
         priority: {
           type: 'string',

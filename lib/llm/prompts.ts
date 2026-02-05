@@ -138,6 +138,21 @@ export function buildThreadHistoryPrompt(
 }
 
 /**
+ * 현재 날짜/시간 프롬프트 생성
+ */
+function buildCurrentDatePrompt(): string {
+  const now = new Date();
+  const weekdays = ['일', '월', '화', '수', '목', '금', '토'];
+  const dayName = weekdays[now.getDay()];
+  const dateStr = now.toISOString().split('T')[0];
+
+  let prompt = `\n## 현재 시간 정보\n`;
+  prompt += `- 오늘: ${dateStr} (${dayName}요일)\n`;
+
+  return prompt;
+}
+
+/**
  * 전체 시스템 프롬프트 생성
  * (스레드 히스토리는 messages 배열에 추가되므로 시스템 프롬프트에서 제외)
  */
@@ -146,6 +161,7 @@ export function buildFullSystemPrompt(
   conversationContext: ConversationContextData | null
 ): string {
   let prompt = SYSTEM_PROMPT;
+  prompt += buildCurrentDatePrompt();
   prompt += buildUserContextPrompt(user);
   prompt += buildConversationContextPrompt(conversationContext);
   // buildThreadHistoryPrompt 제거 - messages 배열에서 처리
