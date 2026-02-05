@@ -161,10 +161,13 @@ async function handleMessageAsync(
       conversationContextData = {};
     }
 
-    // 스레드 히스토리 조회 (threadTs가 있을 때만)
+    // 스레드 히스토리 조회
+    console.log('[handleMessageAsync] threadTs value:', threadTs, '| ts value:', ts);
+
     if (threadTs) {
       console.log('[handleMessageAsync] Fetching thread history for:', threadTs);
       const threadMessages = await getThreadHistory(channel, threadTs, 10);
+      console.log('[handleMessageAsync] getThreadHistory returned:', threadMessages.length, 'messages');
 
       if (threadMessages.length > 0) {
         // 사용자 이름 추가
@@ -179,8 +182,13 @@ async function handleMessageAsync(
             content: cleanMessageText(msg.text),
           })) as ThreadMessageContext[];
 
-        console.log('[handleMessageAsync] Thread history:', conversationContextData.threadHistory.length, 'messages');
+        console.log('[handleMessageAsync] Thread history after filter:', conversationContextData.threadHistory.length, 'messages');
+        console.log('[handleMessageAsync] Thread history content:', JSON.stringify(conversationContextData.threadHistory));
+      } else {
+        console.log('[handleMessageAsync] No thread messages found!');
       }
+    } else {
+      console.log('[handleMessageAsync] No threadTs - this is a new thread or channel message');
     }
 
     // LLM 처리
