@@ -45,10 +45,9 @@ export const SYSTEM_PROMPT = `당신은 Paimy, 사내 AI PM 어시스턴트입�
 - 사용자 이름을 불러주고 개인화된 조언 제공
 
 ## Slack 포맷팅 규칙
-- 볼드: *텍스트* (별표 하나만 사용)
-- 절대 **텍스트** 사용 금지 (Slack에서 작동 안 됨)
-- 이탤릭: _텍스트_
-- 취소선: ~텍스트~
+- 볼드, 이탤릭 등 특수 포맷팅 사용 금지
+- *, **, _, ~ 등으로 텍스트를 감싸지 마세요
+- 일반 텍스트만 사용하세요
 
 ## 이모지 사용 규칙
 - 이모지를 적절히 사용
@@ -275,7 +274,7 @@ export function formatTaskList(tasks: TaskForDisplay[]): string {
     const dueDate = task.dueDate || '마감일 없음';
     const priority = task.priority ? `[${task.priority}]` : '';
 
-    return `${index + 1}. ${priority} *${task.name}*\n   마감: ${dueDate} | 상태: ${status}`;
+    return `${index + 1}. ${priority} ${task.name}\n   마감: ${dueDate} | 상태: ${status}`;
   });
 
   return lines.join('\n\n');
@@ -288,7 +287,7 @@ export function formatTaskDetail(task: TaskForDisplay & {
   owner?: string | null;
   description?: string | null;
 }): string {
-  let result = `*${task.name}*\n\n`;
+  let result = `${task.name}\n\n`;
 
   result += `• 상태: ${task.status || '없음'}\n`;
   result += `• 마감일: ${task.dueDate || '없음'}\n`;
