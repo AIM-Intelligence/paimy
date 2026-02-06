@@ -9,13 +9,57 @@ export const SYSTEM_PROMPT = `당신은 Paimy, 사내 AI PM 어시스턴트입�
 
 ## 역할
 - 노션 태스크 조회, 생성, 수정
+- **프로젝트별 태스크 관리**
 - 업무 현황 브리핑
 - 마감일 리마인드
 
+## 데이터베이스 구조
+
+### 태스크 DB
+- 이름 (제목)
+- 상태: Backlog, In Progress, Blocked, Done
+- 담당자 (Person)
+- 참여자 (Person, 다중)
+- 마감일 (Date)
+- 우선순위: High, Medium, Low
+- **프로젝트** (Relation) - 프로젝트 DB와 연결
+- **팀** (Select) - 담당자 기반 자동 계산
+- 소스: Manual, Slack, Gmail, Calendar
+- 원본 링크 (URL)
+
+### 프로젝트 DB
+- 프로젝트명
+- 오너 (Person)
+- 목표
+- 기한
+- 상태: Active, On Hold, Completed, Archived
+
+## 프로젝트 추론 규칙
+1. 사용자가 명시적으로 프로젝트를 언급하면 해당 프로젝트 연결
+2. 태스크 내용에서 프로젝트 키워드가 발견되면 추론하여 연결
+3. 확실하지 않으면 프로젝트 없이 생성
+
 ## 성격
 - 친근하고 간결하게 대화
-- 이모지를 적절히 사용
 - 핵심 정보를 먼저 전달
+- 사용자 이름을 불러주고 개인화된 조언 제공
+
+## Slack 포맷팅 규칙
+- 볼드: *텍스트* (별표 하나만 사용)
+- 절대 **텍스트** 사용 금지 (Slack에서 작동 안 됨)
+- 이탤릭: _텍스트_
+- 취소선: ~텍스트~
+
+## 이모지 사용 규칙
+- 이모지는 정보 전달에 도움될 때만 최소한으로 사용
+- 허용:
+  - 🔴 마감 지남/긴급 상황 표시
+  - 📅 날짜/일정 섹션 표시
+  - ✅ 완료 확인
+  - ❌ 에러/실패
+- 금지:
+  - 문장 끝 감정 이모지 (😅, 😊, ⚠️ 등)
+  - 장식용 이모지
 
 ## 응답 규칙
 
@@ -55,6 +99,7 @@ export interface UserContext {
   slackDisplayName: string;
   notionId: string | null;
   notionName: string | null;
+  sourceUrl?: string; // Slack 메시지 원본 URL
 }
 
 export interface ThreadMessageContext {
@@ -149,21 +194,67 @@ function buildCurrentDatePrompt(): string {
   let prompt = `\n## 현재 시간 정보\n`;
   prompt += `- 오늘: ${dateStr} (${dayName}요일)\n`;
 
+  // 다음 주 요일별 날짜 미리 계산 (LLM의 날짜 계산 오류 방지)
+  prompt += `- 다음 주 날짜 참고:\n`;
+  for (let i = 0; i < 7; i++) {
+    const futureDate = new Date(now);
+    const daysUntil = (7 - now.getDay()) + i;
+    futureDate.setDate(now.getDate() + daysUntil);
+    const futureDateStr = futureDate.toISOString().split('T')[0];
+    prompt += `  - 다음주 ${weekdays[i]}요일: ${futureDateStr}\n`;
+  }
+
+  prompt += `\n### 마감일 설정 시 주의사항\n`;
+  prompt += `- 마감일은 반드시 한국어 표현("다음주 월요일", "3월 3일", "이번주 금요일" 등)을 그대로 전달하세요\n`;
+  prompt += `- 직접 날짜를 계산해서 YYYY-MM-DD 형식으로 변환하지 마세요. 시스템이 자동으로 계산합니다\n`;
+
   return prompt;
+}
+
+/**
+ * 프로젝트 목록 프롬프트 생성
+ */
+async function buildProjectListPrompt(): Promise<string> {
+  try {
+    const { getProjects } = await import('../mcp/notion.js');
+    const projects = await getProjects();
+
+    if (projects.length === 0) {
+      return '';
+    }
+
+    let prompt = `\n## 현재 프로젝트 목록\n`;
+    prompt += `태스크 생성 시 아래 프로젝트 중 적절한 것을 연결하세요:\n\n`;
+
+    const activeProjects = projects.filter((p: { status: string | null }) => p.status === 'Active');
+    for (const project of activeProjects) {
+      prompt += `- **${project.name}** (ID: ${project.id})`;
+      if (project.owner) {
+        prompt += ` - 오너: ${project.owner.name}`;
+      }
+      prompt += '\n';
+    }
+
+    return prompt;
+  } catch (error) {
+    console.error('Failed to build project list prompt:', error);
+    return '';
+  }
 }
 
 /**
  * 전체 시스템 프롬프트 생성
  * (스레드 히스토리는 messages 배열에 추가되므로 시스템 프롬프트에서 제외)
  */
-export function buildFullSystemPrompt(
+export async function buildFullSystemPrompt(
   user: UserContext,
   conversationContext: ConversationContextData | null
-): string {
+): Promise<string> {
   let prompt = SYSTEM_PROMPT;
   prompt += buildCurrentDatePrompt();
   prompt += buildUserContextPrompt(user);
   prompt += buildConversationContextPrompt(conversationContext);
+  prompt += await buildProjectListPrompt();
   // buildThreadHistoryPrompt 제거 - messages 배열에서 처리
   return prompt;
 }
@@ -191,7 +282,7 @@ export function formatTaskList(tasks: TaskForDisplay[]): string {
     const dueDate = task.dueDate || '마감일 없음';
     const priority = task.priority ? `[${task.priority}]` : '';
 
-    return `${index + 1}. ${priority} *${task.name}*\n   📅 ${dueDate} | 📌 ${status}`;
+    return `${index + 1}. ${priority} *${task.name}*\n   마감: ${dueDate} | 상태: ${status}`;
   });
 
   return lines.join('\n\n');
@@ -204,7 +295,7 @@ export function formatTaskDetail(task: TaskForDisplay & {
   owner?: string | null;
   description?: string | null;
 }): string {
-  let result = `📋 *${task.name}*\n\n`;
+  let result = `*${task.name}*\n\n`;
 
   result += `• 상태: ${task.status || '없음'}\n`;
   result += `• 마감일: ${task.dueDate || '없음'}\n`;
@@ -215,10 +306,10 @@ export function formatTaskDetail(task: TaskForDisplay & {
   }
 
   if (task.description) {
-    result += `\n📝 상세:\n${task.description}\n`;
+    result += `\n상세:\n${task.description}\n`;
   }
 
-  result += `\n🔗 <${task.url}|노션에서 보기>`;
+  result += `\n<${task.url}|노션에서 보기>`;
 
   return result;
 }
