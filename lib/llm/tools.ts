@@ -37,11 +37,11 @@ export const PAIMY_TOOLS: Tool[] = [
         },
         keyword: {
           type: 'string',
-          description: '태스크 제목 검색어',
+          description: '태스크 제목 검색어. 짧은 키워드가 더 정확합니다. 예: "테스트 2"보다 "테스트"로 먼저 검색 후 결과에서 선택.',
         },
         limit: {
           type: 'number',
-          description: '조회할 최대 개수 (기본값: 10)',
+          description: '조회할 최대 개수 (기본값: 10). 특정 태스크를 찾을 때는 5~10개를 권장합니다.',
         },
         project_name: {
           type: 'string',
@@ -79,7 +79,7 @@ export const PAIMY_TOOLS: Tool[] = [
   // 태스크 상태 변경
   {
     name: 'update_task_status',
-    description: '태스크의 상태를 변경합니다.',
+    description: '태스크의 상태를 변경합니다. 반드시 task_id를 제공하세요. task_id를 모르면 먼저 get_tasks로 검색하세요. task_name만으로는 정확한 태스크를 찾지 못할 수 있습니다.',
     input_schema: {
       type: 'object' as const,
       properties: {
@@ -104,7 +104,7 @@ export const PAIMY_TOOLS: Tool[] = [
   // 태스크 담당자 변경
   {
     name: 'update_task_owner',
-    description: '태스크의 담당자를 변경합니다.',
+    description: '태스크의 담당자를 변경합니다. 반드시 task_id를 제공하세요. task_id를 모르면 먼저 get_tasks로 검색하세요. task_name만으로는 정확한 태스크를 찾지 못할 수 있습니다.',
     input_schema: {
       type: 'object' as const,
       properties: {
@@ -128,7 +128,7 @@ export const PAIMY_TOOLS: Tool[] = [
   // 태스크 마감일 변경
   {
     name: 'update_task_due_date',
-    description: '태스크의 마감일을 변경합니다.',
+    description: '태스크의 마감일을 변경합니다. 반드시 task_id를 제공하세요. task_id를 모르면 먼저 get_tasks로 검색하세요. task_name만으로는 정확한 태스크를 찾지 못할 수 있습니다.',
     input_schema: {
       type: 'object' as const,
       properties: {

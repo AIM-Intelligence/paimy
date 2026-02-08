@@ -147,14 +147,24 @@ async function executeGetTaskDetail(
   if (input.task_id) {
     task = await getTaskDetail(input.task_id);
   } else if (input.task_name) {
-    // 이름으로 검색
-    const tasks = await getTasks({ keyword: input.task_name, limit: 1 });
-    task = tasks[0] || null;
+    // 강화된 검색: resolveTaskId 사용
+    const resolution = await resolveTaskId(undefined, input.task_name);
+    if (resolution.taskId) {
+      task = await getTaskDetail(resolution.taskId);
+    } else if (resolution.candidates) {
+      return {
+        data: {
+          error: resolution.error,
+          candidates: resolution.candidates,
+          hint: '정확한 task_id를 지정하거나 get_tasks로 먼저 검색해주세요.',
+        },
+      };
+    }
   }
 
   if (!task) {
     return {
-      data: { error: '태스크를 찾을 수 없습니다.' },
+      data: { error: '태스크를 찾을 수 없습니다. get_tasks로 먼저 검색해보세요.' },
     };
   }
 
@@ -170,12 +180,30 @@ async function executeGetTaskDetail(
 async function executeUpdateTaskStatus(
   input: UpdateTaskStatusInput
 ): Promise<ToolResult> {
-  const taskId = await resolveTaskId(input.task_id, input.task_name);
-  if (!taskId) {
-    return { data: { error: '태스크를 찾을 수 없습니다.' } };
+  const resolution = await resolveTaskId(input.task_id, input.task_name);
+  if (!resolution.taskId) {
+    return {
+      data: {
+        error: resolution.error || '태스크를 찾을 수 없습니다.',
+        candidates: resolution.candidates,
+        hint: '정확한 task_id를 지정하거나 get_tasks로 먼저 검색해주세요.',
+      },
+    };
   }
+  const taskId = resolution.taskId;
 
   const updated = await updateTask(taskId, { status: input.status });
+
+  // 수정 결과 검증
+  if (updated.status !== input.status) {
+    return {
+      data: {
+        success: false,
+        error: `상태 변경에 실패했습니다. 요청: ${input.status}, 실제: ${updated.status}`,
+        task: formatTaskForLLM(updated),
+      },
+    };
+  }
 
   return {
     data: {
@@ -192,10 +220,17 @@ async function executeUpdateTaskStatus(
 async function executeUpdateTaskOwner(
   input: UpdateTaskOwnerInput
 ): Promise<ToolResult> {
-  const taskId = await resolveTaskId(input.task_id, input.task_name);
-  if (!taskId) {
-    return { data: { error: '태스크를 찾을 수 없습니다.' } };
+  const resolution = await resolveTaskId(input.task_id, input.task_name);
+  if (!resolution.taskId) {
+    return {
+      data: {
+        error: resolution.error || '태스크를 찾을 수 없습니다.',
+        candidates: resolution.candidates,
+        hint: '정확한 task_id를 지정하거나 get_tasks로 먼저 검색해주세요.',
+      },
+    };
   }
+  const taskId = resolution.taskId;
 
   // 담당자 이름 → Notion ID
   const users = await findUsersByName(input.owner_name);
@@ -204,6 +239,17 @@ async function executeUpdateTaskOwner(
   }
 
   const updated = await updateTask(taskId, { ownerNotionId: users[0].notion_id });
+
+  // 수정 결과 검증
+  if (updated.owner?.id !== users[0].notion_id) {
+    return {
+      data: {
+        success: false,
+        error: `담당자 변경에 실패했습니다. 요청: ${users[0].notion_name || input.owner_name}`,
+        task: formatTaskForLLM(updated),
+      },
+    };
+  }
 
   return {
     data: {
@@ -221,15 +267,33 @@ async function executeUpdateTaskOwner(
 async function executeUpdateTaskDueDate(
   input: UpdateTaskDueDateInput
 ): Promise<ToolResult> {
-  const taskId = await resolveTaskId(input.task_id, input.task_name);
-  if (!taskId) {
-    return { data: { error: '태스크를 찾을 수 없습니다.' } };
+  const resolution = await resolveTaskId(input.task_id, input.task_name);
+  if (!resolution.taskId) {
+    return {
+      data: {
+        error: resolution.error || '태스크를 찾을 수 없습니다.',
+        candidates: resolution.candidates,
+        hint: '정확한 task_id를 지정하거나 get_tasks로 먼저 검색해주세요.',
+      },
+    };
   }
+  const taskId = resolution.taskId;
 
   // 날짜 파싱
   const dueDate = parseDueDate(input.due_date);
 
   const updated = await updateTask(taskId, { dueDate });
+
+  // 수정 결과 검증
+  if (updated.dueDate !== dueDate) {
+    return {
+      data: {
+        success: false,
+        error: `마감일 변경에 실패했습니다. 요청: ${dueDate}, 실제: ${updated.dueDate}`,
+        task: formatTaskForLLM(updated),
+      },
+    };
+  }
 
   return {
     data: {
@@ -407,22 +471,68 @@ async function resolveOwnerNotionId(
 }
 
 /**
- * 태스크 ID 또는 이름으로 ID 조회
+ * 태스크 ID 또는 이름으로 ID 조회 (강화된 검색)
  */
+interface TaskResolutionResult {
+  taskId: string | null;
+  candidates?: Array<{ id: string; name: string }>;
+  error?: string;
+}
+
 async function resolveTaskId(
   taskId?: string,
   taskName?: string
-): Promise<string | null> {
+): Promise<TaskResolutionResult> {
   if (taskId) {
-    return taskId;
+    return { taskId };
   }
 
-  if (taskName) {
-    const tasks = await getTasks({ keyword: taskName, limit: 1 });
-    return tasks[0]?.id || null;
+  if (!taskName) {
+    return { taskId: null, error: '태스크 ID 또는 이름이 필요합니다.' };
   }
 
-  return null;
+  // Step 1: 전체 키워드로 검색 (limit: 5)
+  let tasks = await getTasks({ keyword: taskName, limit: 5 });
+
+  // Step 2: 결과 없으면 후행 숫자 제거하고 재검색
+  if (tasks.length === 0) {
+    const shorterKeyword = taskName.replace(/\s*\d+$/, '').trim();
+    if (shorterKeyword && shorterKeyword !== taskName) {
+      tasks = await getTasks({ keyword: shorterKeyword, limit: 10 });
+    }
+  }
+
+  // Step 3: 여전히 없으면 첫 단어만으로 검색
+  if (tasks.length === 0) {
+    const firstWord = taskName.split(/\s+/)[0];
+    if (firstWord && firstWord !== taskName) {
+      tasks = await getTasks({ keyword: firstWord, limit: 10 });
+    }
+  }
+
+  if (tasks.length === 0) {
+    return { taskId: null, error: `"${taskName}" 태스크를 찾을 수 없습니다. get_tasks로 먼저 검색해보세요.` };
+  }
+
+  // 정확히 일치하는 태스크 우선
+  const exactMatch = tasks.find(
+    (t) => t.name.trim().toLowerCase() === taskName.trim().toLowerCase()
+  );
+  if (exactMatch) {
+    return { taskId: exactMatch.id };
+  }
+
+  // 결과 1개면 바로 사용
+  if (tasks.length === 1) {
+    return { taskId: tasks[0].id };
+  }
+
+  // 여러 후보가 있으면 후보 목록 반환
+  return {
+    taskId: null,
+    candidates: tasks.map((t) => ({ id: t.id, name: t.name })),
+    error: `"${taskName}"과(와) 일치하는 태스크가 여러 개 있습니다. 정확한 task_id를 지정해주세요.`,
+  };
 }
 
 /**

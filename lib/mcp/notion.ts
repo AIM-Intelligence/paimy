@@ -179,8 +179,29 @@ export async function getTasks(filter: TaskFilter = {}): Promise<Task[]> {
     page_size: filter.limit || 10,
   });
 
+  let results = response.results;
+
+  // 키워드 검색 결과가 없으면 Notion search API로 폴백
+  if (results.length === 0 && filter.keyword) {
+    try {
+      const searchResponse = await notion.search({
+        query: filter.keyword,
+        filter: { property: 'object', value: 'page' },
+        page_size: filter.limit || 10,
+      });
+
+      // 태스크 DB에 속한 페이지만 필터링
+      const normalizedDbId = databaseId.replace(/-/g, '');
+      results = searchResponse.results.filter(
+        (page: any) => page.parent?.database_id?.replace(/-/g, '') === normalizedDbId
+      );
+    } catch (searchError) {
+      console.error('Notion search fallback failed:', searchError);
+    }
+  }
+
   // 결과 파싱
-  return response.results.map(parseTaskPage);
+  return results.map(parseTaskPage);
 }
 
 /**

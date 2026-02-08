@@ -132,7 +132,7 @@ export async function processMessage(
 
   // Tool Use 루프 (최대 5회)
   let iterations = 0;
-  const maxIterations = 5;
+  const maxIterations = 10;
 
   while (iterations < maxIterations) {
     iterations++;
