@@ -15,6 +15,7 @@ const notion = new Client({
 });
 
 const DATABASE_ID = process.env.NOTION_TASK_DATABASE_ID!;
+const PROJECT_DATABASE_ID = process.env.NOTION_PROJECT_DATABASE_ID;
 
 async function setupDatabase() {
   console.log('🚀 Notion 태스크 DB 속성 구성 시작...\n');
@@ -84,10 +85,27 @@ async function setupDatabase() {
         '원본 링크': {
           url: {},
         },
-        // Slack Thread ID - Rich Text
-        'Slack Thread ID': {
-          rich_text: {},
+        // 팀 - Select
+        '팀': {
+          select: {
+            options: [
+              { name: 'Engineering', color: 'blue' },
+              { name: 'Design', color: 'purple' },
+              { name: 'Marketing', color: 'green' },
+              { name: 'Operations', color: 'orange' },
+              { name: 'Product', color: 'pink' },
+            ],
+          },
         },
+        // 프로젝트 - Relation (프로젝트 DB ID가 있는 경우에만)
+        ...(PROJECT_DATABASE_ID ? {
+          '프로젝트': {
+            relation: {
+              database_id: PROJECT_DATABASE_ID,
+              single_property: {},
+            },
+          },
+        } : {}),
       },
     });
 
@@ -101,7 +119,12 @@ async function setupDatabase() {
     console.log('  - 실행 상세');
     console.log('  - 소스 (Manual, Slack, Gmail, Calendar)');
     console.log('  - 원본 링크');
-    console.log('  - Slack Thread ID');
+    console.log('  - 팀 (Engineering, Design, Marketing, Operations, Product)');
+    if (PROJECT_DATABASE_ID) {
+      console.log('  - 프로젝트 (Relation)');
+    } else {
+      console.log('  ⚠️ 프로젝트 Relation 미설정 (NOTION_PROJECT_DATABASE_ID 환경변수 필요)');
+    }
     console.log('\n🎉 태스크 DB 설정 완료!');
 
   } catch (error: any) {

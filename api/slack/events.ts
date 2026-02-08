@@ -137,12 +137,18 @@ async function handleMessageAsync(
     console.log('[handleMessageAsync] User mapping:', userMapping ? 'found' : 'not found');
     console.log('[handleMessageAsync] Slack user:', slackUser?.displayName || 'no display name');
 
+    // Slack 메시지 원본 URL 생성
+    const slackWorkspace = process.env.SLACK_WORKSPACE || 'workspace';
+    const messageTs = ts.replace('.', '');
+    const sourceUrl = `https://${slackWorkspace}.slack.com/archives/${channel}/p${messageTs}`;
+
     // 사용자 컨텍스트 구성
     const userContext: UserContext = {
       slackId: userId,
       slackDisplayName: slackUser?.displayName || slackUser?.realName || userId,
       notionId: userMapping?.notion_id || null,
       notionName: userMapping?.notion_name || null,
+      sourceUrl,
     };
 
     // 대화 컨텍스트 조회/생성

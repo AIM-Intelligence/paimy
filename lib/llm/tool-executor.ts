@@ -12,6 +12,7 @@ import {
   UpdateTaskDueDateInput,
   CreateTaskInput,
   GetDailyBriefingInput,
+  GetProjectsInput,
 } from './tools';
 import { UserContext, ConversationContextData } from './prompts';
 import {
@@ -22,6 +23,8 @@ import {
   getDateRange,
   Task,
   TaskFilter,
+  getProjects,
+  findProjectByName,
 } from '../mcp/notion';
 import {
   getUserMappingBySlackId,
@@ -64,6 +67,9 @@ export async function executeToolCall(
     case 'get_daily_briefing':
       return executeGetDailyBriefing(input as unknown as GetDailyBriefingInput, userContext);
 
+    case 'get_projects':
+      return executeGetProjects(input as unknown as GetProjectsInput);
+
     default:
       throw new Error(`Unknown tool: ${toolName}`);
   }
@@ -105,6 +111,19 @@ async function executeGetTasks(
   // 키워드
   if (input.keyword) {
     filter.keyword = input.keyword;
+  }
+
+  // 프로젝트 필터
+  if (input.project_name) {
+    const project = await findProjectByName(input.project_name);
+    if (project) {
+      filter.projectId = project.id;
+    }
+  }
+
+  // 팀 필터
+  if (input.team) {
+    filter.team = input.team;
   }
 
   // 개수 제한
@@ -228,6 +247,7 @@ async function executeCreateTask(
   input: CreateTaskInput,
   userContext: UserContext
 ): Promise<ToolResult> {
+  const sourceUrl = userContext.sourceUrl;
   // 담당자 결정
   let ownerNotionId: string | undefined;
 
@@ -238,6 +258,26 @@ async function executeCreateTask(
     ownerNotionId = userContext.notionId;
   }
 
+  // 프로젝트 ID 조회
+  let projectId: string | undefined;
+  if (input.project_name) {
+    const project = await findProjectByName(input.project_name);
+    if (project) {
+      projectId = project.id;
+    }
+  }
+
+  // 참여자 이름 → Notion ID 변환
+  const participantNotionIds: string[] = [];
+  if (input.participant_names && input.participant_names.length > 0) {
+    for (const name of input.participant_names) {
+      const notionId = await resolveOwnerNotionId(name, userContext);
+      if (notionId) {
+        participantNotionIds.push(notionId);
+      }
+    }
+  }
+
   const task = await createTask({
     title: input.title,
     ownerNotionId,
@@ -245,12 +285,16 @@ async function executeCreateTask(
     priority: input.priority,
     description: input.description,
     source: 'Slack',
+    sourceUrl,
+    projectId,
+    participantNotionIds: participantNotionIds.length > 0 ? participantNotionIds : undefined,
   });
 
   return {
     data: {
       success: true,
       task: formatTaskForLLM(task),
+      project: projectId ? input.project_name : null,
     },
     contextUpdate: {
       lastTaskId: task.id,
@@ -310,6 +354,31 @@ async function executeGetDailyBriefing(
         weekCount: weekTasks.length,
         overdueCount: filteredOverdue.length,
       },
+    },
+  };
+}
+
+async function executeGetProjects(
+  input: GetProjectsInput
+): Promise<ToolResult> {
+  const projects = await getProjects();
+
+  const filtered = input.include_on_hold
+    ? projects.filter(p => p.status === 'Active' || p.status === 'On Hold')
+    : projects.filter(p => p.status === 'Active');
+
+  return {
+    data: {
+      projects: filtered.map(p => ({
+        id: p.id,
+        name: p.name,
+        owner: p.owner?.name || null,
+        status: p.status,
+        deadline: p.deadline,
+        goal: p.goal,
+        url: p.url,
+      })),
+      count: filtered.length,
     },
   };
 }
@@ -405,6 +474,20 @@ function parseDueDate(input: string): string {
     return now.toISOString().split('T')[0];
   }
 
+  // "X월 Y일" 패턴 (예: "3월 3일", "12월 25일")
+  const koreanDateMatch = input.match(/(\d{1,2})월\s*(\d{1,2})일/);
+  if (koreanDateMatch) {
+    const month = parseInt(koreanDateMatch[1], 10);
+    const day = parseInt(koreanDateMatch[2], 10);
+    const year = now.getFullYear();
+    // 이미 지난 날짜면 내년으로
+    const targetDate = new Date(year, month - 1, day);
+    if (targetDate < now) {
+      targetDate.setFullYear(year + 1);
+    }
+    return targetDate.toISOString().split('T')[0];
+  }
+
   // 이미 YYYY-MM-DD 형식이면 그대로
   if (/^\d{4}-\d{2}-\d{2}$/.test(input)) {
     return input;
@@ -427,5 +510,7 @@ function formatTaskForLLM(task: Task) {
     owner: task.owner?.name || null,
     description: task.description,
     url: task.url,
+    project: task.project?.name || null,
+    team: task.team || null,
   };
 }

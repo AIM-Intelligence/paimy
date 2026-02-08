@@ -12,6 +12,8 @@ export interface UserMapping {
   is_active: boolean;
   created_at: string;
   updated_at: string;
+  aliases: string[] | null; // 한글 별칭 등 추가 이름
+  team: string | null; // 소속 팀
 }
 
 export interface ConversationContext {
@@ -109,10 +111,27 @@ export async function getSlackIdByNotionId(
 }
 
 /**
- * 이름으로 사용자 검색
+ * 이름 또는 별칭으로 사용자 검색
+ * - slack_display_name, notion_name: ILIKE 검색
+ * - aliases: 배열 내 부분 일치 검색 (RPC 함수 사용)
  */
 export async function findUsersByName(name: string): Promise<UserMapping[]> {
   const supabase = getSupabaseClient();
+
+  // RPC 함수로 검색 (aliases 포함)
+  const { data: rpcData, error: rpcError } = await supabase.rpc(
+    'search_users_by_name',
+    { search_term: name }
+  );
+
+  // RPC 함수가 있으면 그 결과 사용
+  if (!rpcError && rpcData) {
+    return (rpcData as UserMapping[]) ?? [];
+  }
+
+  // RPC 함수가 없거나 실패하면 기존 방식으로 폴백
+  // (aliases 컬럼 마이그레이션 전에도 작동)
+  console.log('RPC search_users_by_name not available, falling back to basic search');
   const { data, error } = await supabase
     .from('user_mappings')
     .select('*')
@@ -143,6 +162,159 @@ export async function getAllActiveUsers(): Promise<UserMapping[]> {
   }
 
   return (data as UserMapping[]) ?? [];
+}
+
+/**
+ * 팀별 사용자 조회
+ */
+export async function getUsersByTeam(teamName: string): Promise<UserMapping[]> {
+  const supabase = getSupabaseClient();
+
+  // RPC 함수로 검색
+  const { data: rpcData, error: rpcError } = await supabase.rpc(
+    'get_users_by_team',
+    { team_name: teamName }
+  );
+
+  if (!rpcError && rpcData) {
+    return (rpcData as UserMapping[]) ?? [];
+  }
+
+  // RPC 함수가 없으면 직접 쿼리
+  console.log('RPC get_users_by_team not available, falling back to direct query');
+  const { data, error } = await supabase
+    .from('user_mappings')
+    .select('*')
+    .eq('is_active', true)
+    .ilike('team', `%${teamName}%`);
+
+  if (error) {
+    console.error('Error fetching users by team:', error);
+    return [];
+  }
+
+  return (data as UserMapping[]) ?? [];
+}
+
+/**
+ * Notion ID로 담당자의 팀 조회
+ */
+export async function getTeamByNotionId(notionId: string): Promise<string | null> {
+  const supabase = getSupabaseClient();
+  const { data, error } = await supabase
+    .from('user_mappings')
+    .select('team')
+    .eq('notion_id', notionId)
+    .eq('is_active', true)
+    .single();
+
+  if (error || !data) {
+    return null;
+  }
+
+  return (data as { team: string | null }).team;
+}
+
+// === 사용자 별칭 관리 함수들 ===
+
+/**
+ * 사용자 별칭 추가
+ */
+export async function addUserAlias(
+  slackId: string,
+  newAlias: string
+): Promise<boolean> {
+  const supabase = getSupabaseClient();
+
+  // 현재 aliases 조회
+  const { data: user, error: fetchError } = await supabase
+    .from('user_mappings')
+    .select('aliases')
+    .eq('slack_id', slackId)
+    .single();
+
+  if (fetchError) {
+    console.error('Error fetching user:', fetchError);
+    return false;
+  }
+
+  // 중복 체크 후 추가
+  const currentAliases = (user?.aliases as string[]) ?? [];
+  if (currentAliases.includes(newAlias)) {
+    return true; // 이미 존재
+  }
+
+  const updatedAliases = [...currentAliases, newAlias];
+
+  const { error: updateError } = await supabase
+    .from('user_mappings')
+    .update({ aliases: updatedAliases })
+    .eq('slack_id', slackId);
+
+  if (updateError) {
+    console.error('Error adding alias:', updateError);
+    return false;
+  }
+
+  return true;
+}
+
+/**
+ * 사용자 별칭 제거
+ */
+export async function removeUserAlias(
+  slackId: string,
+  aliasToRemove: string
+): Promise<boolean> {
+  const supabase = getSupabaseClient();
+
+  const { data: user, error: fetchError } = await supabase
+    .from('user_mappings')
+    .select('aliases')
+    .eq('slack_id', slackId)
+    .single();
+
+  if (fetchError) {
+    console.error('Error fetching user:', fetchError);
+    return false;
+  }
+
+  const currentAliases = (user?.aliases as string[]) ?? [];
+  const updatedAliases = currentAliases.filter((a) => a !== aliasToRemove);
+
+  const { error: updateError } = await supabase
+    .from('user_mappings')
+    .update({ aliases: updatedAliases })
+    .eq('slack_id', slackId);
+
+  if (updateError) {
+    console.error('Error removing alias:', updateError);
+    return false;
+  }
+
+  return true;
+}
+
+/**
+ * 사용자 별칭 전체 설정
+ */
+export async function setUserAliases(
+  slackId: string,
+  aliases: string[]
+): Promise<boolean> {
+  const supabase = getSupabaseClient();
+
+  const { error } = await supabase
+    .from('user_mappings')
+    .update({ aliases })
+    .eq('slack_id', slackId);
+
+  if (error) {
+    console.error('Error setting aliases:', error);
+    return false;
+  }
+
+  return true;
 }
 
 // === 대화 컨텍스트 함수들 ===

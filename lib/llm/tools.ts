@@ -43,6 +43,14 @@ export const PAIMY_TOOLS: Tool[] = [
           type: 'number',
           description: '조회할 최대 개수 (기본값: 10)',
         },
+        project_name: {
+          type: 'string',
+          description: '프로젝트 이름 (부분 일치)',
+        },
+        team: {
+          type: 'string',
+          description: '팀 이름 (예: "Engineering", "Design")',
+        },
       },
       required: [],
     },
@@ -144,7 +152,7 @@ export const PAIMY_TOOLS: Tool[] = [
   // 태스크 생성
   {
     name: 'create_task',
-    description: '새 태스크를 생성합니다.',
+    description: '새 태스크를 생성합니다. 프로젝트와 연결할 수 있습니다.',
     input_schema: {
       type: 'object' as const,
       properties: {
@@ -169,6 +177,15 @@ export const PAIMY_TOOLS: Tool[] = [
           type: 'string',
           description: '태스크 상세 설명',
         },
+        project_name: {
+          type: 'string',
+          description: '연결할 프로젝트 이름 (선택)',
+        },
+        participant_names: {
+          type: 'array',
+          items: { type: 'string' },
+          description: '참여자 이름 목록 (담당자 외 추가 참여자)',
+        },
       },
       required: ['title'],
     },
@@ -189,6 +206,22 @@ export const PAIMY_TOOLS: Tool[] = [
       required: [],
     },
   },
+
+  // 프로젝트 목록 조회
+  {
+    name: 'get_projects',
+    description: '활성 프로젝트 목록을 조회합니다.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        include_on_hold: {
+          type: 'boolean',
+          description: 'On Hold 상태 프로젝트 포함 여부 (기본: false)',
+        },
+      },
+      required: [],
+    },
+  },
 ];
 
 // === Tool Input 타입 정의 ===
@@ -200,6 +233,8 @@ export interface GetTasksInput {
   priority?: 'High' | 'Medium' | 'Low';
   keyword?: string;
   limit?: number;
+  project_name?: string;
+  team?: string;
 }
 
 export interface GetTaskDetailInput {
@@ -231,10 +266,16 @@ export interface CreateTaskInput {
   due_date?: string;
   priority?: 'High' | 'Medium' | 'Low';
   description?: string;
+  project_name?: string;
+  participant_names?: string[];
 }
 
 export interface GetDailyBriefingInput {
   user_name?: string;
+}
+
+export interface GetProjectsInput {
+  include_on_hold?: boolean;
 }
 
 // Union 타입
@@ -245,7 +286,8 @@ export type ToolInput =
   | UpdateTaskOwnerInput
   | UpdateTaskDueDateInput
   | CreateTaskInput
-  | GetDailyBriefingInput;
+  | GetDailyBriefingInput
+  | GetProjectsInput;
 
 // Tool 이름 타입
 export type ToolName =
@@ -255,4 +297,5 @@ export type ToolName =
   | 'update_task_owner'
   | 'update_task_due_date'
   | 'create_task'
-  | 'get_daily_briefing';
+  | 'get_daily_briefing'
+  | 'get_projects';

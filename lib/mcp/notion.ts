@@ -31,7 +31,26 @@ const getTaskDatabaseId = () => {
   return id;
 };
 
+// 프로젝트 DB ID
+const getProjectDatabaseId = () => {
+  const id = process.env.NOTION_PROJECT_DATABASE_ID?.trim();
+  if (!id) {
+    throw new Error('NOTION_PROJECT_DATABASE_ID is not configured');
+  }
+  return id;
+};
+
 // === 타입 정의 ===
+
+export interface Project {
+  id: string;
+  name: string;
+  owner: { id: string; name: string } | null;
+  goal: string | null;
+  deadline: string | null;
+  status: 'Active' | 'On Hold' | 'Completed' | 'Archived' | null;
+  url: string;
+}
 
 export interface Task {
   id: string;
@@ -45,6 +64,8 @@ export interface Task {
   source: string | null;
   sourceUrl: string | null;
   url: string;
+  project: { id: string; name: string } | null;
+  team: string | null;
 }
 
 export interface TaskFilter {
@@ -55,6 +76,8 @@ export interface TaskFilter {
   priority?: 'High' | 'Medium' | 'Low';
   keyword?: string;
   limit?: number;
+  projectId?: string;
+  team?: string;
 }
 
 // === 태스크 조회 ===
@@ -119,6 +142,24 @@ export async function getTasks(filter: TaskFilter = {}): Promise<Task[]> {
       property: '이름',
       title: {
         contains: filter.keyword,
+      },
+    });
+  }
+
+  if (filter.projectId) {
+    conditions.push({
+      property: '프로젝트',
+      relation: {
+        contains: filter.projectId,
+      },
+    });
+  }
+
+  if (filter.team) {
+    conditions.push({
+      property: '팀',
+      select: {
+        equals: filter.team,
       },
     });
   }
@@ -233,6 +274,9 @@ export interface TaskCreate {
   description?: string;
   source?: 'Manual' | 'Slack' | 'Gmail' | 'Calendar';
   sourceUrl?: string;
+  projectId?: string;
+  team?: string;
+  participantNotionIds?: string[];
 }
 
 /**
@@ -297,6 +341,36 @@ export async function createTask(data: TaskCreate): Promise<Task> {
     };
   }
 
+  // 프로젝트 relation 추가
+  if (data.projectId) {
+    properties['프로젝트'] = {
+      relation: [{ id: data.projectId }],
+    };
+  }
+
+  // 팀 추가 (명시적 지정 또는 담당자 기반 자동 계산)
+  if (data.team) {
+    properties['팀'] = {
+      select: { name: data.team },
+    };
+  } else if (data.ownerNotionId) {
+    // 담당자의 팀 자동 조회
+    const { getTeamByNotionId } = await import('../db/supabase.js');
+    const autoTeam = await getTeamByNotionId(data.ownerNotionId);
+    if (autoTeam) {
+      properties['팀'] = {
+        select: { name: autoTeam },
+      };
+    }
+  }
+
+  // 참여자 추가
+  if (data.participantNotionIds && data.participantNotionIds.length > 0) {
+    properties['참여자'] = {
+      people: data.participantNotionIds.map(id => ({ id })),
+    };
+  }
+
   const page = await notion.pages.create({
     parent: { database_id: databaseId },
     properties,
@@ -330,6 +404,19 @@ function parseTaskPage(page: any): Task {
     name: p.name || 'Unknown',
   }));
 
+  // 프로젝트 relation 파싱
+  const projectProp = props['프로젝트'];
+  let project: { id: string; name: string } | null = null;
+  if (projectProp?.relation?.[0]) {
+    const projectId = projectProp.relation[0].id;
+    // 캐시에서 프로젝트 이름 조회 시도
+    const cachedProject = projectCache?.projects.find(p => p.id === projectId);
+    project = { id: projectId, name: cachedProject?.name || '' };
+  }
+
+  // 팀 파싱
+  const team = props['팀']?.select?.name || null;
+
   return {
     id: page.id,
     name,
@@ -342,6 +429,8 @@ function parseTaskPage(page: any): Task {
     source: props['소스']?.select?.name || null,
     sourceUrl: props['원본 링크']?.url || null,
     url: page.url,
+    project,
+    team,
   };
 }
 
@@ -383,4 +472,107 @@ export function getDateRange(period: 'today' | 'this_week' | 'next_week'): {
       };
     }
   }
+}
+
+// === 프로젝트 캐싱 ===
+
+interface ProjectCache {
+  projects: Project[];
+  lastFetched: number;
+}
+
+let projectCache: ProjectCache | null = null;
+const PROJECT_CACHE_TTL = 60 * 60 * 1000; // 1시간
+
+/**
+ * 프로젝트 목록 조회 (캐시 사용)
+ */
+export async function getProjects(forceRefresh = false): Promise<Project[]> {
+  const now = Date.now();
+
+  // 캐시 유효성 체크
+  if (!forceRefresh && projectCache && (now - projectCache.lastFetched < PROJECT_CACHE_TTL)) {
+    return projectCache.projects;
+  }
+
+  try {
+    const notion = getNotionClient();
+    const databaseId = getProjectDatabaseId();
+
+    const response = await notion.databases.query({
+      database_id: databaseId,
+      filter: {
+        property: '상태',
+        select: {
+          does_not_equal: 'Archived',
+        },
+      },
+      sorts: [{ property: '프로젝트명', direction: 'ascending' }],
+      page_size: 100,
+    });
+
+    const projects = response.results.map(parseProjectPage);
+
+    projectCache = {
+      projects,
+      lastFetched: now,
+    };
+
+    return projects;
+  } catch (error) {
+    console.error('Failed to fetch projects:', error);
+    // 캐시가 있으면 stale 데이터라도 반환
+    if (projectCache) {
+      console.warn('Returning stale project cache');
+      return projectCache.projects;
+    }
+    return [];
+  }
+}
+
+/**
+ * 프로젝트 캐시 강제 갱신
+ */
+export async function refreshProjectCache(): Promise<void> {
+  await getProjects(true);
+}
+
+/**
+ * 프로젝트 이름으로 검색
+ */
+export async function findProjectByName(name: string): Promise<Project | null> {
+  const projects = await getProjects();
+
+  // 정확히 일치
+  const exact = projects.find(p => p.name.toLowerCase() === name.toLowerCase());
+  if (exact) return exact;
+
+  // 부분 일치
+  const partial = projects.find(p => p.name.toLowerCase().includes(name.toLowerCase()));
+  return partial || null;
+}
+
+/**
+ * Notion 프로젝트 페이지를 Project 객체로 파싱
+ */
+function parseProjectPage(page: any): Project {
+  const props = page.properties;
+
+  const nameProp = props['프로젝트명'] || props['이름'] || props['Name'];
+  const name = nameProp?.title?.[0]?.plain_text || 'Untitled';
+
+  const ownerProp = props['오너'] || props['담당자'];
+  const owner = ownerProp?.people?.[0]
+    ? { id: ownerProp.people[0].id, name: ownerProp.people[0].name || 'Unknown' }
+    : null;
+
+  return {
+    id: page.id,
+    name,
+    owner,
+    goal: props['목표']?.rich_text?.[0]?.plain_text || null,
+    deadline: props['기한']?.date?.start || null,
+    status: props['상태']?.select?.name || null,
+    url: page.url,
+  };
 }

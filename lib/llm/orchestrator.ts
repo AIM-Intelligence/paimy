@@ -81,8 +81,8 @@ export async function processMessage(
 
   const client = getAnthropicClient();
 
-  // 시스템 프롬프트 생성
-  const systemPrompt = buildFullSystemPrompt(
+  // 시스템 프롬프트 생성 (비동기 - 프로젝트 목록 포함)
+  const systemPrompt = await buildFullSystemPrompt(
     input.userContext,
     input.conversationContext
   );
