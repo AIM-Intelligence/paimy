@@ -3,6 +3,11 @@ import { getAllActiveUsers, type UserMapping } from '../../lib/db/supabase.js';
 import { getTasks, getDateRange, type Task } from '../../lib/mcp/notion.js';
 import { sendDM } from '../../lib/slack/responder.js';
 
+// Vercel 함수 설정: 최대 실행 시간 300초 (5분)
+export const config = {
+  maxDuration: 300,
+};
+
 // 배치 크기 설정 (rate limit 회피용)
 const BATCH_SIZE = 5;
 const BATCH_DELAY_MS = 1000;

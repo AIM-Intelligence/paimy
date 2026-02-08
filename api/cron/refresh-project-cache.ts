@@ -1,6 +1,11 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { refreshProjectCache } from '../../lib/mcp/notion';
 
+// Vercel 함수 설정: 최대 실행 시간 300초 (5분)
+export const config = {
+  maxDuration: 300,
+};
+
 /**
  * 프로젝트 캐시 갱신 Cron Job
  * 실행: 매시간 (0 * * * *)

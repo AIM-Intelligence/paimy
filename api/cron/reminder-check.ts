@@ -1,5 +1,10 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 
+// Vercel 함수 설정: 최대 실행 시간 300초 (5분)
+export const config = {
+  maxDuration: 300,
+};
+
 /**
  * 마감 리마인드 체크 Cron Job
  * 실행: 매시 정각

@@ -1,5 +1,10 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 
+// Vercel 함수 설정: 최대 실행 시간 300초 (5분)
+export const config = {
+  maxDuration: 300,
+};
+
 /**
  * 주간 리포트 Cron Job
  * 실행: 매주 월요일 09:00 KST (UTC 00:00)
