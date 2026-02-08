@@ -119,8 +119,16 @@ async function sendBriefingToUser(
   yesterday.setDate(yesterday.getDate() - 1);
   const yesterdayStr = yesterday.toISOString().split('T')[0];
 
+  // 내일~7일 후 날짜 계산
+  const tomorrow = new Date();
+  tomorrow.setDate(tomorrow.getDate() + 1);
+  const tomorrowStr = tomorrow.toISOString().split('T')[0];
+  const nextWeek = new Date();
+  nextWeek.setDate(nextWeek.getDate() + 7);
+  const nextWeekStr = nextWeek.toISOString().split('T')[0];
+
   // 태스크 조회 병렬 실행 (API 호출 시간 단축)
-  const [todayTasks, inProgressTasks, overdueTasks] = await Promise.all([
+  const [todayTasks, inProgressTasks, overdueTasks, upcomingTasks] = await Promise.all([
     // 1. 오늘 마감 태스크
     getTasks({
       ownerNotionId: user.notion_id!,
@@ -140,6 +148,13 @@ async function sendBriefingToUser(
       dueDateEnd: yesterdayStr,
       limit: 10,
     }),
+    // 4. 예정된 태스크 (내일~7일 후 마감)
+    getTasks({
+      ownerNotionId: user.notion_id!,
+      dueDateStart: tomorrowStr,
+      dueDateEnd: nextWeekStr,
+      limit: 10,
+    }),
   ]);
 
   // Done이 아닌 것만 필터
@@ -147,15 +162,27 @@ async function sendBriefingToUser(
   const actualOverdue = overdueTasks.filter(
     (t) => t.status !== 'Done' && t.dueDate && t.dueDate < today.start
   );
+  const upcomingPending = upcomingTasks.filter((t) => t.status !== 'Done');
 
-  // 4. 태스크가 없으면 브리핑 스킵
-  if (todayPending.length === 0 && inProgressTasks.length === 0 && actualOverdue.length === 0) {
+  // 5. 태스크가 없으면 브리핑 스킵
+  if (
+    todayPending.length === 0 &&
+    inProgressTasks.length === 0 &&
+    actualOverdue.length === 0 &&
+    upcomingPending.length === 0
+  ) {
     console.log(`No tasks for user ${user.slack_id}, skipping briefing`);
     return { success: true };
   }
 
-  // 5. 브리핑 메시지 생성
-  const message = formatBriefingMessage(user, todayPending, inProgressTasks, actualOverdue);
+  // 6. 브리핑 메시지 생성
+  const message = formatBriefingMessage(
+    user,
+    todayPending,
+    inProgressTasks,
+    actualOverdue,
+    upcomingPending
+  );
 
   // 6. DM 발송
   await sendDM(user.slack_id, message);
@@ -171,7 +198,8 @@ function formatBriefingMessage(
   user: UserMapping,
   todayTasks: Task[],
   inProgressTasks: Task[],
-  overdueTasks: Task[]
+  overdueTasks: Task[],
+  upcomingTasks: Task[]
 ): string {
   const name = user.slack_display_name || user.notion_name || '팀원';
   const lines: string[] = [];
@@ -205,6 +233,25 @@ function formatBriefingMessage(
 
     if (filtered.length > 0) {
       lines.push(`진행 중 (${filtered.length}개)`);
+      filtered.forEach((task, i) => {
+        lines.push(formatTaskLine(task, i + 1));
+      });
+      lines.push('');
+    }
+  }
+
+  // 예정된 태스크 (내일~7일 후 마감)
+  if (upcomingTasks.length > 0) {
+    // 다른 카테고리와 중복 제거
+    const todayIds = new Set(todayTasks.map((t) => t.id));
+    const overdueIds = new Set(overdueTasks.map((t) => t.id));
+    const inProgressIds = new Set(inProgressTasks.map((t) => t.id));
+    const filtered = upcomingTasks.filter(
+      (t) => !todayIds.has(t.id) && !overdueIds.has(t.id) && !inProgressIds.has(t.id)
+    );
+
+    if (filtered.length > 0) {
+      lines.push(`예정된 태스크 (${filtered.length}개)`);
       filtered.forEach((task, i) => {
         lines.push(formatTaskLine(task, i + 1));
       });
