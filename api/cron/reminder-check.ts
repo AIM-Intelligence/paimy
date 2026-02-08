@@ -56,6 +56,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
   }
 
+  // 주말(토/일) 체크 — cron 설정의 안전장치
+  const now = new Date();
+  const dayOfWeek = now.getUTCDay(); // UTC 기준 (Vercel cron은 UTC)
+  if (dayOfWeek === 0 || dayOfWeek === 6) {
+    console.log('Weekend detected, skipping reminder check');
+    return res.status(200).json({ success: true, message: 'Skipped (weekend)' });
+  }
+
   try {
     console.log('Starting reminder check job...');
 
