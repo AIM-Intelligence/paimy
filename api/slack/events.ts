@@ -1,4 +1,5 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
+import { waitUntil } from '@vercel/functions';
 import crypto from 'crypto';
 import { processMessage } from '../../lib/llm/orchestrator';
 
@@ -320,19 +321,21 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     console.log('[Slack Events] Returning ok immediately');
     res.status(200).json({ ok: true });
 
-    // 비동기 처리 (fire-and-forget)
+    // 비동기 처리 (waitUntil로 Vercel 함수 종료 방지)
     switch (slackEvent.type) {
       case 'app_mention':
         console.log('[Slack Events] Processing app_mention');
         console.log('[Slack Events] ts:', slackEvent.ts);
         console.log('[Slack Events] thread_ts:', slackEvent.thread_ts);
-        handleMessageAsync(
-          slackEvent.user,
-          slackEvent.text,
-          slackEvent.channel,
-          slackEvent.ts,
-          slackEvent.thread_ts
-        ).catch((err) => console.error('[Slack Events] handleMessageAsync error:', err));
+        waitUntil(
+          handleMessageAsync(
+            slackEvent.user,
+            slackEvent.text,
+            slackEvent.channel,
+            slackEvent.ts,
+            slackEvent.thread_ts
+          ).catch((err) => console.error('[Slack Events] handleMessageAsync error:', err))
+        );
         break;
 
       case 'message':
@@ -340,13 +343,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         // 채널 ID가 D로 시작하면 DM
         if (slackEvent.channel.startsWith('D')) {
           console.log('[Slack Events] Processing DM message');
-          handleMessageAsync(
-            slackEvent.user,
-            slackEvent.text,
-            slackEvent.channel,
-            slackEvent.ts,
-            slackEvent.thread_ts
-          ).catch((err) => console.error('[Slack Events] handleMessageAsync error:', err));
+          waitUntil(
+            handleMessageAsync(
+              slackEvent.user,
+              slackEvent.text,
+              slackEvent.channel,
+              slackEvent.ts,
+              slackEvent.thread_ts
+            ).catch((err) => console.error('[Slack Events] handleMessageAsync error:', err))
+          );
         }
         break;
 
