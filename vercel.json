@@ -15,11 +15,18 @@
     {
       "path": "/api/cron/weekly-report",
       "schedule": "0 0 * * 1"
+    },
+    {
+      "path": "/api/cron/refresh-project-cache",
+      "schedule": "0 * * * *"
     }
   ],
   "functions": {
     "api/**/*.ts": {
       "maxDuration": 30
+    },
+    "api/cron/*.ts": {
+      "maxDuration": 300
     }
   }
 }
