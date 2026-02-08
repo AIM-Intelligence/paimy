@@ -35,7 +35,7 @@ function buildNotionLinkFooter(tasks: MutatedTaskInfo[]): string {
 
   const uniqueTasks = new Map<string, MutatedTaskInfo>();
   for (const task of tasks) {
-    uniqueTasks.set(task.url, task);
+    uniqueTasks.set(task.name, task);
   }
 
   const links = Array.from(uniqueTasks.values())
@@ -195,10 +195,10 @@ export async function processMessage(
         if (MUTATION_TOOLS.has(toolUse.name) && result.data) {
           const data = result.data as { success?: boolean; task?: { name?: string; url?: string } };
           if (data.success && data.task?.url) {
-            mutatedTasks.push({
-              name: data.task.name || 'Unknown Task',
-              url: data.task.url,
-            });
+            const taskName = data.task.name || 'Unknown Task';
+            if (!mutatedTasks.some(t => t.name === taskName)) {
+              mutatedTasks.push({ name: taskName, url: data.task.url });
+            }
           }
         }
 

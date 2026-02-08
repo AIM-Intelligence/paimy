@@ -242,6 +242,42 @@ async function buildProjectListPrompt(): Promise<string> {
 }
 
 /**
+ * 팀원 정보 프롬프트 생성 (별칭 포함)
+ */
+async function buildTeamMembersPrompt(): Promise<string> {
+  try {
+    const { getAllActiveUsers } = await import('../db/supabase.js');
+    const users = await getAllActiveUsers();
+
+    if (users.length === 0) {
+      return '';
+    }
+
+    let prompt = `\n## 팀원 정보\n`;
+    prompt += `태스크 배정 시 아래 정보를 참고하세요. 별칭으로 언급해도 해당 팀원을 인식하세요:\n\n`;
+
+    for (const user of users) {
+      prompt += `- ${user.notion_name || user.slack_display_name || user.slack_username}`;
+      if (user.notion_id) {
+        prompt += ` (Notion ID: ${user.notion_id})`;
+      }
+      if (user.aliases && user.aliases.length > 0) {
+        prompt += ` — 별칭: ${user.aliases.join(', ')}`;
+      }
+      if (user.team) {
+        prompt += ` [${user.team}]`;
+      }
+      prompt += '\n';
+    }
+
+    return prompt;
+  } catch (error) {
+    console.error('Failed to build team members prompt:', error);
+    return '';
+  }
+}
+
+/**
  * 전체 시스템 프롬프트 생성
  * (스레드 히스토리는 messages 배열에 추가되므로 시스템 프롬프트에서 제외)
  */
@@ -254,7 +290,7 @@ export async function buildFullSystemPrompt(
   prompt += buildUserContextPrompt(user);
   prompt += buildConversationContextPrompt(conversationContext);
   prompt += await buildProjectListPrompt();
-  // buildThreadHistoryPrompt 제거 - messages 배열에서 처리
+  prompt += await buildTeamMembersPrompt();
   return prompt;
 }
 
