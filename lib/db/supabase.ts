@@ -379,3 +379,162 @@ export async function updateConversationContext(
 
   return true;
 }
+
+// === 리마인더 히스토리 함수들 ===
+
+export type ReminderType = '3_day' | '1_day' | 'overdue' | 'overdue_weekly';
+
+export interface ReminderHistoryRecord {
+  id: string;
+  slack_id: string;
+  notion_task_id: string;
+  reminder_type: ReminderType;
+  sent_at: string;
+  sent_date: string;  // YYYY-MM-DD 형식
+}
+
+/**
+ * 오늘 해당 리마인더가 이미 발송되었는지 확인
+ */
+export async function wasReminderSentToday(
+  slackId: string,
+  taskId: string,
+  reminderType: ReminderType
+): Promise<boolean> {
+  const supabase = getSupabaseClient();
+
+  // 오늘 날짜 범위 계산 (KST 기준)
+  const now = new Date();
+  const todayStart = new Date(now);
+  todayStart.setHours(0, 0, 0, 0);
+  const todayEnd = new Date(now);
+  todayEnd.setHours(23, 59, 59, 999);
+
+  const { data, error } = await supabase
+    .from('reminder_history')
+    .select('id')
+    .eq('slack_id', slackId)
+    .eq('notion_task_id', taskId)
+    .eq('reminder_type', reminderType)
+    .gte('sent_at', todayStart.toISOString())
+    .lte('sent_at', todayEnd.toISOString())
+    .limit(1);
+
+  if (error) {
+    console.error('Error checking reminder history:', error);
+    return false; // 에러 시 발송 허용
+  }
+
+  return (data?.length ?? 0) > 0;
+}
+
+/**
+ * 리마인더 발송 기록 저장
+ */
+export async function recordReminderSent(
+  slackId: string,
+  taskId: string,
+  reminderType: ReminderType
+): Promise<boolean> {
+  const supabase = getSupabaseClient();
+
+  // 오늘 날짜 (YYYY-MM-DD 형식)
+  const today = new Date().toISOString().split('T')[0];
+
+  const { error } = await supabase.from('reminder_history').insert({
+    slack_id: slackId,
+    notion_task_id: taskId,
+    reminder_type: reminderType,
+    sent_date: today,
+  });
+
+  if (error) {
+    // unique constraint 위반은 무시 (이미 기록됨)
+    if (error.code === '23505') {
+      return true;
+    }
+    console.error('Error recording reminder:', error);
+    return false;
+  }
+
+  return true;
+}
+
+/**
+ * 오늘 사용자에게 발송된 모든 리마인더 조회
+ */
+export async function getTodayReminders(
+  slackId: string
+): Promise<{ taskId: string; reminderType: ReminderType }[]> {
+  const supabase = getSupabaseClient();
+
+  const now = new Date();
+  const todayStart = new Date(now);
+  todayStart.setHours(0, 0, 0, 0);
+
+  const { data, error } = await supabase
+    .from('reminder_history')
+    .select('notion_task_id, reminder_type')
+    .eq('slack_id', slackId)
+    .gte('sent_at', todayStart.toISOString());
+
+  if (error) {
+    console.error('Error fetching today reminders:', error);
+    return [];
+  }
+
+  return (data ?? []).map((row) => ({
+    taskId: row.notion_task_id,
+    reminderType: row.reminder_type as ReminderType,
+  }));
+}
+
+/**
+ * 마감 초과 태스크의 마지막 리마인더 날짜 조회 (재알림 주기 체크용)
+ */
+export async function getLastOverdueReminderDate(
+  slackId: string,
+  taskId: string
+): Promise<Date | null> {
+  const supabase = getSupabaseClient();
+
+  const { data, error } = await supabase
+    .from('reminder_history')
+    .select('sent_at')
+    .eq('slack_id', slackId)
+    .eq('notion_task_id', taskId)
+    .in('reminder_type', ['overdue', 'overdue_weekly'])
+    .order('sent_at', { ascending: false })
+    .limit(1);
+
+  if (error || !data || data.length === 0) {
+    return null;
+  }
+
+  return new Date(data[0].sent_at);
+}
+
+/**
+ * 오래된 리마인더 히스토리 정리 (30일 이상)
+ */
+export async function cleanupOldReminders(
+  daysToKeep: number = 30
+): Promise<number> {
+  const supabase = getSupabaseClient();
+
+  const cutoffDate = new Date();
+  cutoffDate.setDate(cutoffDate.getDate() - daysToKeep);
+
+  const { data, error } = await supabase
+    .from('reminder_history')
+    .delete()
+    .lt('sent_at', cutoffDate.toISOString())
+    .select('id');
+
+  if (error) {
+    console.error('Error cleaning up old reminders:', error);
+    return 0;
+  }
+
+  return data?.length ?? 0;
+}
