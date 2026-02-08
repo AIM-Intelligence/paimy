@@ -141,7 +141,7 @@ export async function processMessage(
     console.log('[Orchestrator] Calling Claude API, iteration:', iterations);
     const response = await client.messages.create({
       model: 'claude-sonnet-4-5-20250929',
-      max_tokens: 1024,
+      max_tokens: parseInt(process.env.LLM_MAX_TOKENS || '2048', 10),
       system: systemPrompt,
       tools: PAIMY_TOOLS,
       messages,

@@ -275,6 +275,26 @@ export async function joinChannel(channelId: string): Promise<boolean> {
   }
 }
 
+// === 유저 정보 글로벌 캐시 (5분 TTL) ===
+
+const globalUserCache = new Map<string, { name: string; expiry: number }>();
+const USER_CACHE_TTL = 5 * 60 * 1000;
+
+function getCachedUserName(userId: string): string | null {
+  const cached = globalUserCache.get(userId);
+  if (cached && Date.now() < cached.expiry) {
+    return cached.name;
+  }
+  if (cached) {
+    globalUserCache.delete(userId);
+  }
+  return null;
+}
+
+function setCachedUserName(userId: string, name: string): void {
+  globalUserCache.set(userId, { name, expiry: Date.now() + USER_CACHE_TTL });
+}
+
 // === 스레드 히스토리 ===
 
 export interface ThreadMessage {
@@ -292,30 +312,48 @@ export interface ThreadMessage {
 export async function getThreadHistory(
   channel: string,
   threadTs: string,
-  limit: number = 10
+  limit: number = 50
 ): Promise<ThreadMessage[]> {
   const client = getSlackClient();
 
   try {
-    const result = await client.conversations.replies({
-      channel,
-      ts: threadTs,
-      limit: limit + 1, // 부모 메시지 포함 가능성 고려
-      inclusive: true,
-    });
+    let allMessages: any[] = [];
+    let cursor: string | undefined;
 
-    if (!result.messages || result.messages.length === 0) {
+    // cursor 기반 페이지네이션으로 모든 메시지 가져오기
+    do {
+      const result = await client.conversations.replies({
+        channel,
+        ts: threadTs,
+        limit: 200, // Slack API 최대 페이지 크기
+        inclusive: true,
+        cursor,
+      });
+
+      if (result.messages && result.messages.length > 0) {
+        allMessages = allMessages.concat(result.messages);
+      }
+
+      cursor = result.response_metadata?.next_cursor;
+
+      // 이미 충분한 메시지를 가져왔으면 중단
+      if (allMessages.length >= limit) {
+        break;
+      }
+    } while (cursor);
+
+    if (allMessages.length === 0) {
       return [];
     }
 
-    let messages = result.messages;
-
     // 최근 N개만 반환 (가장 오래된 것부터)
-    if (messages.length > limit) {
-      messages = messages.slice(-limit);
+    if (allMessages.length > limit) {
+      allMessages = allMessages.slice(-limit);
     }
 
-    return messages.map((msg) => ({
+    console.log('[getThreadHistory] Fetched', allMessages.length, 'messages (limit:', limit, ')');
+
+    return allMessages.map((msg) => ({
       user: msg.user || 'unknown',
       text: msg.text || '',
       ts: msg.ts || '',
@@ -339,23 +377,23 @@ export async function getThreadHistory(
 export async function enrichThreadWithUserNames(
   messages: ThreadMessage[]
 ): Promise<ThreadMessage[]> {
-  const userCache = new Map<string, string>();
-
   for (const msg of messages) {
     if (msg.isBot) {
       msg.userName = 'Paimy';
       continue;
     }
 
-    if (userCache.has(msg.user)) {
-      msg.userName = userCache.get(msg.user);
+    // 글로벌 캐시 확인
+    const cached = getCachedUserName(msg.user);
+    if (cached) {
+      msg.userName = cached;
       continue;
     }
 
     try {
       const userInfo = await getUserInfo(msg.user);
       const name = userInfo?.displayName || userInfo?.realName || msg.user;
-      userCache.set(msg.user, name);
+      setCachedUserName(msg.user, name);
       msg.userName = name;
     } catch {
       msg.userName = msg.user;

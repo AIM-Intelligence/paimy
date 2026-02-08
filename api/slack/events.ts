@@ -172,7 +172,8 @@ async function handleMessageAsync(
 
     if (threadTs) {
       console.log('[handleMessageAsync] Fetching thread history for:', threadTs);
-      const threadMessages = await getThreadHistory(channel, threadTs, 10);
+      const threadHistoryLimit = parseInt(process.env.THREAD_HISTORY_LIMIT || '50', 10);
+      const threadMessages = await getThreadHistory(channel, threadTs, threadHistoryLimit);
       console.log('[handleMessageAsync] getThreadHistory returned:', threadMessages.length, 'messages');
 
       if (threadMessages.length > 0) {
@@ -315,24 +316,23 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(200).json({ ok: true });
     }
 
+    // Slack 3초 제한 충족을 위해 즉시 200 응답 반환
+    console.log('[Slack Events] Returning ok immediately');
+    res.status(200).json({ ok: true });
+
+    // 비동기 처리 (fire-and-forget)
     switch (slackEvent.type) {
       case 'app_mention':
         console.log('[Slack Events] Processing app_mention');
         console.log('[Slack Events] ts:', slackEvent.ts);
         console.log('[Slack Events] thread_ts:', slackEvent.thread_ts);
-        // 디버그: await로 변경하여 로그 확인
-        try {
-          await handleMessageAsync(
-            slackEvent.user,
-            slackEvent.text,
-            slackEvent.channel,
-            slackEvent.ts,
-            slackEvent.thread_ts
-          );
-          console.log('[Slack Events] handleMessageAsync completed');
-        } catch (err) {
-          console.error('[Slack Events] handleMessageAsync error:', err);
-        }
+        handleMessageAsync(
+          slackEvent.user,
+          slackEvent.text,
+          slackEvent.channel,
+          slackEvent.ts,
+          slackEvent.thread_ts
+        ).catch((err) => console.error('[Slack Events] handleMessageAsync error:', err));
         break;
 
       case 'message':
@@ -340,26 +340,20 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         // 채널 ID가 D로 시작하면 DM
         if (slackEvent.channel.startsWith('D')) {
           console.log('[Slack Events] Processing DM message');
-          try {
-            await handleMessageAsync(
-              slackEvent.user,
-              slackEvent.text,
-              slackEvent.channel,
-              slackEvent.ts,
-              slackEvent.thread_ts
-            );
-          } catch (err) {
-            console.error('[Slack Events] handleMessageAsync error:', err);
-          }
+          handleMessageAsync(
+            slackEvent.user,
+            slackEvent.text,
+            slackEvent.channel,
+            slackEvent.ts,
+            slackEvent.thread_ts
+          ).catch((err) => console.error('[Slack Events] handleMessageAsync error:', err));
         }
         break;
 
       default:
         console.log(`[Slack Events] Unhandled event type: ${slackEvent.type}`);
     }
+  } else {
+    return res.status(200).json({ ok: true });
   }
-
-  // 디버그: 처리 완료 후 응답 (Slack retry 가능)
-  console.log('[Slack Events] Returning ok');
-  return res.status(200).json({ ok: true });
 }
