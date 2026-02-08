@@ -13,6 +13,38 @@ import {
 } from './prompts';
 import { executeToolCall, ToolResult } from './tool-executor';
 
+/** 태스크를 변경하는 툴 목록 */
+const MUTATION_TOOLS: Set<string> = new Set([
+  'create_task',
+  'update_task_status',
+  'update_task_owner',
+  'update_task_due_date',
+]);
+
+interface MutatedTaskInfo {
+  name: string;
+  url: string;
+}
+
+/**
+ * 변경된 태스크의 노션 링크 푸터 생성
+ * URL 기준 중복 제거 (동일 태스크에 여러 수정이 발생한 경우)
+ */
+function buildNotionLinkFooter(tasks: MutatedTaskInfo[]): string {
+  if (tasks.length === 0) return '';
+
+  const uniqueTasks = new Map<string, MutatedTaskInfo>();
+  for (const task of tasks) {
+    uniqueTasks.set(task.url, task);
+  }
+
+  const links = Array.from(uniqueTasks.values())
+    .map(task => `📎 <${task.url}|${task.name} - 노션에서 보기>`)
+    .join('\n');
+
+  return '\n\n' + links;
+}
+
 // Anthropic 클라이언트 싱글톤
 let anthropicClient: Anthropic | null = null;
 
@@ -96,6 +128,7 @@ export async function processMessage(
 
   const toolsUsed: string[] = [];
   const updatedContext: Partial<ConversationContextData> = {};
+  const mutatedTasks: MutatedTaskInfo[] = [];
 
   // Tool Use 루프 (최대 5회)
   let iterations = 0;
@@ -130,7 +163,7 @@ export async function processMessage(
 
     // Tool Use가 없으면 종료
     if (toolUseBlocks.length === 0) {
-      const finalResponse = textBlocks.join('\n');
+      const finalResponse = textBlocks.join('\n') + buildNotionLinkFooter(mutatedTasks);
       console.log('[Orchestrator] Final response length:', finalResponse.length);
       console.log('[Orchestrator] Final response preview:', finalResponse.substring(0, 100));
       return {
@@ -156,6 +189,17 @@ export async function processMessage(
         // 컨텍스트 업데이트
         if (result.contextUpdate) {
           Object.assign(updatedContext, result.contextUpdate);
+        }
+
+        // 뮤테이션 툴인 경우 태스크 정보 수집
+        if (MUTATION_TOOLS.has(toolUse.name) && result.data) {
+          const data = result.data as { success?: boolean; task?: { name?: string; url?: string } };
+          if (data.success && data.task?.url) {
+            mutatedTasks.push({
+              name: data.task.name || 'Unknown Task',
+              url: data.task.url,
+            });
+          }
         }
 
         toolResults.push({
@@ -191,7 +235,7 @@ export async function processMessage(
 
   // 최대 반복 도달 시 마지막 텍스트 반환
   return {
-    response: '요청을 처리하는 데 문제가 발생했습니다. 다시 시도해 주세요.',
+    response: '요청을 처리하는 데 문제가 발생했습니다. 다시 시도해 주세요.' + buildNotionLinkFooter(mutatedTasks),
     toolsUsed,
     updatedContext,
   };
