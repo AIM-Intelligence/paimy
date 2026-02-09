@@ -402,3 +402,28 @@ export async function enrichThreadWithUserNames(
 
   return messages;
 }
+
+// === 메시지 퍼머링크 ===
+
+/**
+ * 메시지 퍼머링크 조회
+ * Slack chat.getPermalink API를 사용하여 정확한 메시지 URL 반환
+ */
+export async function getMessagePermalink(
+  channel: string,
+  messageTs: string
+): Promise<string | null> {
+  const client = getSlackClient();
+
+  try {
+    const result = await client.chat.getPermalink({
+      channel,
+      message_ts: messageTs,
+    });
+
+    return result.permalink || null;
+  } catch (error: any) {
+    console.warn('[getMessagePermalink] Failed:', error.data?.error || error.message);
+    return null;
+  }
+}

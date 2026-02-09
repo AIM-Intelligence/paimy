@@ -31,6 +31,7 @@ import {
   getUserInfo,
   getThreadHistory,
   enrichThreadWithUserNames,
+  getMessagePermalink,
   ThreadMessage,
 } from '../../lib/slack/responder';
 import {
@@ -112,6 +113,15 @@ function cleanMessageText(text: string): string {
 }
 
 /**
+ * Slack 메시지 URL 수동 구성 (chat.getPermalink 실패 시 fallback)
+ */
+function buildSlackMessageUrl(channel: string, ts: string): string {
+  const workspace = process.env.SLACK_WORKSPACE || 'workspace';
+  const messageTs = ts.replace('.', '');
+  return `https://${workspace}.slack.com/archives/${channel}/p${messageTs}`;
+}
+
+/**
  * 비동기 메시지 처리 (3초 제한 우회)
  */
 async function handleMessageAsync(
@@ -130,18 +140,17 @@ async function handleMessageAsync(
     await addReaction(channel, ts, 'eyes');
     console.log('[handleMessageAsync] Eyes reaction added');
 
-    // 사용자 정보 조회
-    const [userMapping, slackUser] = await Promise.all([
+    // 사용자 정보 조회 + 메시지 퍼머링크 조회 (병렬)
+    const [userMapping, slackUser, permalink] = await Promise.all([
       getUserMappingBySlackId(userId).catch(() => null),
       getUserInfo(userId),
+      getMessagePermalink(channel, ts),
     ]);
     console.log('[handleMessageAsync] User mapping:', userMapping ? 'found' : 'not found');
     console.log('[handleMessageAsync] Slack user:', slackUser?.displayName || 'no display name');
 
-    // Slack 메시지 원본 URL 생성
-    const slackWorkspace = process.env.SLACK_WORKSPACE || 'workspace';
-    const messageTs = ts.replace('.', '');
-    const sourceUrl = `https://${slackWorkspace}.slack.com/archives/${channel}/p${messageTs}`;
+    // Slack 메시지 원본 URL (API 결과 우선, 실패 시 수동 구성 fallback)
+    const sourceUrl = permalink || buildSlackMessageUrl(channel, ts);
 
     // 사용자 컨텍스트 구성
     const userContext: UserContext = {
