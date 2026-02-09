@@ -286,7 +286,7 @@ function formatCombinedMessage(
     lines.push(`[마감 초과] (${overdueTasks.length}개)`);
     overdueTasks.forEach((task, i) => {
       const daysOverdue = getDaysOverdue(task.dueDate!);
-      lines.push(`${i + 1}. ${task.name} | ${daysOverdue}일 초과`);
+      lines.push(`${i + 1}. <${task.url}|${task.name}> | ${daysOverdue}일 초과`);
     });
     lines.push('');
   }
@@ -296,7 +296,7 @@ function formatCombinedMessage(
     lines.push(`[내일 마감] (${oneDayTasks.length}개)`);
     oneDayTasks.forEach((task, i) => {
       const priority = task.priority || 'Medium';
-      lines.push(`${i + 1}. ${task.name} | ${priority}`);
+      lines.push(`${i + 1}. <${task.url}|${task.name}> | ${priority}`);
     });
     lines.push('');
   }
@@ -305,7 +305,7 @@ function formatCombinedMessage(
   if (threeDayTasks.length > 0) {
     lines.push(`[3일 후 마감] (${threeDayTasks.length}개)`);
     threeDayTasks.forEach((task, i) => {
-      lines.push(`${i + 1}. ${task.name}`);
+      lines.push(`${i + 1}. <${task.url}|${task.name}>`);
     });
     lines.push('');
   }

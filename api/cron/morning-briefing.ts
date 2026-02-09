@@ -286,7 +286,7 @@ function formatTaskLine(task: Task, num: number): string {
   const dueDate = task.dueDate ? formatDate(task.dueDate) : '';
   const duePart = dueDate ? ` | ${dueDate}` : '';
 
-  return `${num}. ${task.name}\n   ${status}${priority}${duePart}`;
+  return `${num}. <${task.url}|${task.name}>\n   ${status}${priority}${duePart}`;
 }
 
 /**
