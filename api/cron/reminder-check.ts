@@ -25,6 +25,7 @@ const OVERDUE_RE_REMIND_DAYS = 7;
 interface ReminderBatch {
   threeDayTasks: Task[];
   oneDayTasks: Task[];
+  todayTasks: Task[];
   overdueTasks: Task[];
 }
 
@@ -42,6 +43,7 @@ interface ReminderResult {
  * 체크 항목:
  * - 마감 3일 전 태스크
  * - 마감 1일 전 (내일) 태스크
+ * - 오늘 마감 태스크
  * - 마감 경과 태스크 (최초 + 7일마다 재알림)
  */
 export default async function handler(req: VercelRequest, res: VercelResponse) {
@@ -146,6 +148,7 @@ async function processUserReminders(user: UserMapping): Promise<ReminderResult> 
   // 3. 발송할 태스크가 없으면 스킵
   const totalTasks =
     filtered.overdueTasks.length +
+    filtered.todayTasks.length +
     filtered.oneDayTasks.length +
     filtered.threeDayTasks.length;
 
@@ -157,6 +160,7 @@ async function processUserReminders(user: UserMapping): Promise<ReminderResult> 
   const message = formatCombinedMessage(
     user,
     filtered.overdueTasks,
+    filtered.todayTasks,
     filtered.oneDayTasks,
     filtered.threeDayTasks
   );
@@ -185,7 +189,7 @@ async function getTasksForReminder(user: UserMapping): Promise<ReminderBatch> {
 
   const formatDateStr = (d: Date) => d.toISOString().split('T')[0];
 
-  const [threeDayTasks, oneDayTasks, overdueTasks] = await Promise.all([
+  const [threeDayTasks, oneDayTasks, todayTasks, overdueTasks] = await Promise.all([
     // 3일 후 마감 (정확히 3일 후)
     getTasks({
       ownerNotionId: user.notion_id!,
@@ -200,6 +204,13 @@ async function getTasksForReminder(user: UserMapping): Promise<ReminderBatch> {
       dueDateEnd: formatDateStr(tomorrow),
       limit: 20,
     }),
+    // 오늘 마감 (정확히 오늘)
+    getTasks({
+      ownerNotionId: user.notion_id!,
+      dueDateStart: formatDateStr(today),
+      dueDateEnd: formatDateStr(today),
+      limit: 20,
+    }),
     // 마감 초과 (어제까지)
     getTasks({
       ownerNotionId: user.notion_id!,
@@ -211,6 +222,7 @@ async function getTasksForReminder(user: UserMapping): Promise<ReminderBatch> {
   return {
     threeDayTasks: threeDayTasks.filter((t) => t.status !== 'Done'),
     oneDayTasks: oneDayTasks.filter((t) => t.status !== 'Done'),
+    todayTasks: todayTasks.filter((t) => t.status !== 'Done'),
     overdueTasks: overdueTasks.filter((t) => t.status !== 'Done'),
   };
 }
@@ -228,12 +240,15 @@ async function filterAlreadySent(
     todayReminders.map((r) => `${r.taskId}:${r.reminderType}`)
   );
 
-  // 3일 전, 1일 전 리마인더 필터링 (오늘 이미 발송된 것 제외)
+  // 3일 전, 오늘, 1일 전 리마인더 필터링 (오늘 이미 발송된 것 제외)
   const filteredThreeDay = tasks.threeDayTasks.filter(
     (t) => !sentToday.has(`${t.id}:3_day`)
   );
   const filteredOneDay = tasks.oneDayTasks.filter(
     (t) => !sentToday.has(`${t.id}:1_day`)
+  );
+  const filteredToday = tasks.todayTasks.filter(
+    (t) => !sentToday.has(`${t.id}:today`)
   );
 
   // 마감 초과 태스크는 최초 발송 또는 7일 주기 재발송
@@ -263,6 +278,7 @@ async function filterAlreadySent(
   return {
     threeDayTasks: filteredThreeDay,
     oneDayTasks: filteredOneDay,
+    todayTasks: filteredToday,
     overdueTasks: filteredOverdue,
   };
 }
@@ -273,6 +289,7 @@ async function filterAlreadySent(
 function formatCombinedMessage(
   user: UserMapping,
   overdueTasks: Task[],
+  todayTasks: Task[],
   oneDayTasks: Task[],
   threeDayTasks: Task[]
 ): string {
@@ -287,6 +304,16 @@ function formatCombinedMessage(
     overdueTasks.forEach((task, i) => {
       const daysOverdue = getDaysOverdue(task.dueDate!);
       lines.push(`${i + 1}. <${task.url}|${task.name}> | ${daysOverdue}일 초과`);
+    });
+    lines.push('');
+  }
+
+  // 오늘 마감
+  if (todayTasks.length > 0) {
+    lines.push(`[오늘 마감] (${todayTasks.length}개)`);
+    todayTasks.forEach((task, i) => {
+      const priority = task.priority || 'Medium';
+      lines.push(`${i + 1}. <${task.url}|${task.name}> | ${priority}`);
     });
     lines.push('');
   }
@@ -344,6 +371,10 @@ async function recordSentReminders(
 
   for (const task of tasks.oneDayTasks) {
     recordPromises.push(recordReminderSent(slackId, task.id, '1_day'));
+  }
+
+  for (const task of tasks.todayTasks) {
+    recordPromises.push(recordReminderSent(slackId, task.id, 'today'));
   }
 
   for (const task of tasks.overdueTasks) {

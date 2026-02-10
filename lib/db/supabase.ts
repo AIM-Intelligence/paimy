@@ -382,7 +382,7 @@ export async function updateConversationContext(
 
 // === 리마인더 히스토리 함수들 ===
 
-export type ReminderType = '3_day' | '1_day' | 'overdue' | 'overdue_weekly';
+export type ReminderType = '3_day' | '1_day' | 'today' | 'overdue' | 'overdue_weekly';
 
 export interface ReminderHistoryRecord {
   id: string;
